@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.models import AnalyzeRequest, PlaceData, PlaceReview
 from app.scoring import analyze_place
 
@@ -66,3 +68,37 @@ def test_fraud_like_store_triggers_high_fraud():
     result = analyze_place(place, request)
     assert result.fraud_score >= 70
     assert result.risk_label == "high"
+
+
+def test_analyze_place_with_no_reviews_and_missing_tabelog():
+    place = PlaceData(place_id="ChIJzero", name="カフェゼロ", rating=4.0, user_ratings_total=0, reviews=[])
+    request = AnalyzeRequest(
+        google_maps_url=BASE_URL,
+        tabelog_rating=None,
+        tabelog_review_count=None,
+        tabelog_name=None,
+    )
+    result = analyze_place(place, request)
+    assert result.signals.total_reviews == 0
+    assert result.signals.tabelog_missing is True
+    assert result.risk_label == "low"
+
+
+def test_low_data_with_high_google_rating_and_low_tabelog_diff():
+    reviews = [
+        _make_review(5, 2, "最高"),
+        _make_review(5, 3, "最高"),
+        _make_review(5, 4, "最高"),
+        _make_review(4, 5, "良かった"),
+        _make_review(1, 6, "詐欺価格"),
+    ]
+    place = PlaceData(place_id="ChIJmix", name="寿司MAX", rating=4.9, user_ratings_total=5, reviews=reviews)
+    request = AnalyzeRequest(
+        google_maps_url=BASE_URL,
+        tabelog_rating=3.0,
+        tabelog_review_count=1,
+        tabelog_name="寿司マックス",
+    )
+    result = analyze_place(place, request)
+    assert result.signals.rating_diff_google_minus_tabelog == pytest.approx(1.9)
+    assert any("Googleと食べログの評価差" in comment for comment in result.comments_ja)

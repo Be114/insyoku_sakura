@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import unicodedata
@@ -13,11 +14,15 @@ from .models import PlaceData, PlaceReview
 
 GOOGLE_DETAILS_URL = "https://maps.googleapis.com/maps/api/place/details/json"
 GOOGLE_V1_BASE = "https://places.googleapis.com/v1"
-PLACE_ID_PATTERN = re.compile(r"!1s([^!]+)!")
+PLACE_ID_PATTERN = re.compile(r"!1s([^!]+)!?")
+logger = logging.getLogger(__name__)
 
 
-def parse_place_id(url: str) -> Optional[str]:
+def parse_place_id(url: Optional[str]) -> Optional[str]:
     """Extract place_id from various Google Maps URLs."""
+
+    if not url:
+        return None
 
     def _extract(parsed_url) -> Optional[str]:
         query = parse_qs(parsed_url.query)
@@ -106,13 +111,33 @@ class GooglePlacesClient:
             "orderBy": "NEWEST",
         }
         next_page_token: Optional[str] = None
-        while len(collected) < max_reviews:
+        seen_tokens: set[str] = set()
+        max_pages = 20
+        page_count = 0
+        while len(collected) < max_reviews and page_count < max_pages:
+            page_count += 1
             if next_page_token:
+                if next_page_token in seen_tokens:
+                    logger.warning("Detected circular Google reviews page token for %s", place_id)
+                    break
+                seen_tokens.add(next_page_token)
                 params["pageToken"] = next_page_token
-            resp = await self._client.get(url, headers=headers, params=params)
-            if resp.status_code == 404:
-                break
-            resp.raise_for_status()
+            else:
+                params.pop("pageToken", None)
+            try:
+                resp = await self._client.get(url, headers=headers, params=params)
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                if status == 404:
+                    break
+                if status == 429:
+                    logger.warning("Rate limited by Google Places reviews API for %s", place_id)
+                elif status == 403:
+                    logger.error("Google Places reviews API forbidden (check key/quota) for %s", place_id)
+                else:
+                    logger.error("Google Places reviews API error %s for %s", status, place_id)
+                raise
             payload = resp.json()
             reviews = payload.get("reviews", [])
             for review in reviews:
@@ -142,7 +167,7 @@ class GooglePlacesClient:
                 created_at = datetime.fromisoformat(publish_time.replace("Z", "+00:00"))
             except ValueError:
                 pass
-        return PlaceReview(rating=int(rating), text=text, created_at=created_at)
+        return PlaceReview(rating=float(rating), text=text, created_at=created_at)
 
     def _convert_details_review(self, review: dict) -> Optional[PlaceReview]:
         rating = review.get("rating")
@@ -156,4 +181,4 @@ class GooglePlacesClient:
                 created_at = datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
             except (ValueError, TypeError):
                 pass
-        return PlaceReview(rating=int(rating), text=text, created_at=created_at)
+        return PlaceReview(rating=float(rating), text=text, created_at=created_at)

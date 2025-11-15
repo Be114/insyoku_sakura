@@ -4,7 +4,7 @@ import difflib
 import unicodedata
 from collections import Counter, deque
 from datetime import datetime, timedelta
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import List, Optional, Sequence
 
 from .models import AnalysisResponse, AnalysisSignals, AnalyzeRequest, FraudKeywordCount, PlaceData, PlaceReview
 
@@ -137,7 +137,7 @@ def _calc_low_star_ratio(reviews: Sequence[PlaceReview], total: int) -> float:
     return low / total
 
 
-def _calc_fraud_stats(reviews: Sequence[PlaceReview], total: int) -> tuple[float, Dict[str, int]]:
+def _calc_fraud_stats(reviews: Sequence[PlaceReview], total: int) -> tuple[float, Counter[str]]:
     if total == 0:
         return 0.0, Counter()
     keyword_counts: Counter[str] = Counter()

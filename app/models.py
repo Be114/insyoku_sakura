@@ -14,7 +14,7 @@ class AnalyzeRequest(BaseModel):
 
 
 class PlaceReview(BaseModel):
-    rating: int = Field(ge=1, le=5)
+    rating: float = Field(ge=1, le=5)
     text: str = ""
     created_at: datetime
 

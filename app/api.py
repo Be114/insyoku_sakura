@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from typing import Optional
 
 import httpx
@@ -11,25 +12,32 @@ from .models import AnalysisResponse, AnalyzeRequest
 from .scoring import analyze_place
 
 logger = logging.getLogger(__name__)
-app = FastAPI(title="SagiCheck API", version="0.1.0")
 _client: Optional[GooglePlacesClient] = None
 
 
-def get_google_client() -> GooglePlacesClient:
+@asynccontextmanager
+async def lifespan(_: FastAPI):
     global _client
+    try:
+        _client = GooglePlacesClient()
+    except ValueError as exc:
+        logger.error("Google client initialization failed: %s", exc)
+        raise
+    try:
+        yield
+    finally:
+        if _client is not None:
+            await _client.close()
+            _client = None
+
+
+app = FastAPI(title="SagiCheck API", version="0.1.0", lifespan=lifespan)
+
+
+def get_google_client() -> GooglePlacesClient:
     if _client is None:
-        try:
-            _client = GooglePlacesClient()
-        except ValueError as exc:
-            logger.error("Google client initialization failed: %s", exc)
-            raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Google Places クライアントが初期化されていません。")
     return _client
-
-
-@app.on_event("shutdown")
-async def shutdown_event() -> None:
-    if _client is not None:
-        await _client.close()
 
 
 @app.post("/analyze", response_model=AnalysisResponse)
